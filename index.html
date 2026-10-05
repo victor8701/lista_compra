@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#10b981">
+    <title>Mi Compra Inteligente v5</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        .pb-safe { padding-bottom: env(safe-area-inset-bottom, 80px); }
+        [x-cloak] { display: none !important; }
+        body { -webkit-tap-highlight-color: transparent; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 antialiased h-screen flex flex-col" x-data="appData()" x-cloak>
+
+    <!-- Header -->
+    <header class="bg-emerald-600 text-white p-4 sticky top-0 z-20 shadow-md flex justify-between items-center">
+        <div x-show="currentTab === 'compra'" class="w-full flex items-center">
+            <i class="fas fa-list-ul mr-3 opacity-80"></i>
+            <select x-model="activeListId" class="bg-emerald-700 text-white font-bold text-lg rounded-lg px-2 py-1.5 outline-none cursor-pointer flex-1 border border-emerald-500 shadow-sm">
+                <template x-for="list in lists" :key="list.id">
+                    <option :value="list.id" x-text="list.name"></option>
+                </template>
+            </select>
+        </div>
+        <h1 x-show="currentTab !== 'compra'" class="text-xl font-bold w-full text-center" x-text="tabs[currentTab].title"></h1>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-1 overflow-y-auto p-4 pb-24">
+        
+        <!-- PESTAÑA: COMPRA (Lista Activa) -->
+        <div x-show="currentTab === 'compra'" x-transition.opacity>
+            
+            <div class="flex justify-between items-center mb-6 bg-white p-3 rounded-xl shadow-sm border border-gray-100">
+                <button @click="uncheckAll()" class="text-xs bg-orange-50 text-orange-600 px-3 py-2 rounded-lg font-bold border border-orange-200 active:bg-orange-100 transition">
+                    <i class="fas fa-undo mr-1"></i> Desmarcar
+                </button>
+                <div class="text-xs text-gray-400 font-medium" x-text="`${activeItems.filter(i => i.checked).length}/${activeItems.length} listos`"></div>
+                <button @click="openCheckout()" class="text-sm bg-emerald-600 text-white px-4 py-2 rounded-lg font-bold shadow-md hover:bg-emerald-700 active:scale-95 transition flex items-center">
+                    <i class="fas fa-check-double mr-2"></i> Finalizar
+                </button>
+            </div>
+
+            <!-- Entrada rápida -->
+            <div class="mb-5 flex gap-2">
+                <select x-model="quickItemCategory" class="w-2/5 p-3 rounded-lg border border-gray-300 bg-white shadow-sm text-xs font-bold text-gray-700 outline-none">
+                    <template x-for="cat in categories" :key="cat">
+                        <option :value="cat" x-text="cat"></option>
+                    </template>
+                </select>
+                <input x-model="quickItemName" @keyup.enter="addQuickItem()" type="text" placeholder="Añadir..." class="flex-1 p-3 rounded-lg border border-gray-300 focus:border-emerald-500 outline-none shadow-sm text-sm">
+                <button @click="addQuickItem()" class="bg-emerald-600 text-white px-4 py-3 rounded-lg font-bold shadow active:scale-95 transition">
+                    <i class="fas fa-plus"></i>
+                </button>
+            </div>
+
+            <template x-for="(items, category) in groupedList" :key="category">
+                <div class="mb-6" x-show="items.length > 0">
+                    <h2 class="text-base font-bold mb-2 text-emerald-700 capitalize border-b-2 border-emerald-200 pb-1 flex items-center justify-between">
+                        <span x-text="category"></span>
+                        <span class="text-xs font-normal text-emerald-500 bg-emerald-50 px-2 py-0.5 rounded-full" x-text="items.length"></span>
+                    </h2>
+                    <ul class="bg-white rounded-xl shadow-sm divide-y divide-gray-100">
+                        <template x-for="item in items" :key="item.id">
+                            <li class="p-3 transition" :class="{'bg-gray-50': item.checked}">
+                                <div class="flex items-start justify-between">
+                                    <label class="flex items-center space-x-3 flex-1 cursor-pointer">
+                                        <input type="checkbox" x-model="item.checked" class="w-6 h-6 mt-0.5 text-emerald-600 rounded-full border-gray-300 focus:ring-emerald-500 transition-all">
+                                        <span :class="{'line-through text-gray-400': item.checked}" class="text-gray-800 font-medium text-base transition-all" x-text="item.name"></span>
+                                    </label>
+                                    <button @click="deleteItem(item.id)" class="text-gray-300 hover:text-red-500 px-3 py-1 transition-colors active:scale-90">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+
+                                <!-- Panel de Configuración de Precio -->
+                                <div x-show="item.checked" x-collapse class="mt-3 ml-9 p-3 bg-emerald-50 rounded-lg border border-emerald-100 shadow-inner">
+                                    <div class="flex flex-wrap gap-3 items-end">
+                                        <div>
+                                            <label class="text-[10px] uppercase font-bold text-gray-500 mb-1 block">Precio</label>
+                                            <input type="number" step="0.01" x-model.number="item.price" class="w-20 p-2 rounded-md border border-gray-300 outline-none focus:border-emerald-500 text-sm" placeholder="0.00">
+                                        </div>
+                                        <div>
+                                            <label class="text-[10px] uppercase font-bold text-gray-500 mb-1 block">Formato</label>
+                                            <select x-model="item.unit" class="w-24 p-2 rounded-md border border-gray-300 outline-none focus:border-emerald-500 text-sm bg-white">
+                                                <option value="total">Total</option>
+                                                <option value="kg">/ kg</option>
+                                                <option value="L">/ Litro</option>
+                                                <option value="ud">/ Unidad</option>
+                                            </select>
+                                        </div>
+                                        <div x-show="item.unit !== 'total'">
+                                            <label class="text-[10px] uppercase font-bold text-gray-500 mb-1 block">Cantidad</label>
+                                            <input type="number" step="0.01" x-model.number="item.qty" class="w-20 p-2 rounded-md border border-gray-300 outline-none focus:border-emerald-500 text-sm" placeholder="1">
+                                        </div>
+                                    </div>
+                                    <div class="mt-2 text-right text-xs font-bold text-emerald-800">
+                                        Costo del producto: <span x-text="getItemCost(item).toFixed(2)"></span>
+                                    </div>
+                                </div>
+                            </li>
+                        </template>
+                    </ul>
+                </div>
+            </template>
+            
+            <div x-show="activeItems.length === 0" class="text-center text-gray-400 mt-12">
+                <i class="fas fa-clipboard-list text-5xl mb-4 text-emerald-200"></i>
+                <p class="font-medium text-lg">Lista vacía</p>
+                <p class="text-sm">Añade productos para empezar a comprar.</p>
+                <button @click="restoreDefaultItems()" class="mt-4 bg-emerald-100 text-emerald-700 px-4 py-2 rounded-lg font-bold text-sm hover:bg-emerald-200">
+                    <i class="fas fa-magic mr-1"></i> Recuperar Lista Inicial
+                </button>
+            </div>
+        </div>
+
+        <!-- PESTAÑA: ANÁLISIS (Historial y Gráficos) -->
+        <div x-show="currentTab === 'analisis'" x-transition.opacity class="space-y-6">
+            
+            <!-- Historial -->
+            <div class="bg-white p-5 rounded-xl shadow-sm border-t-4 border-indigo-500">
+                <h3 class="font-bold text-gray-800 text-lg mb-4"><i class="fas fa-receipt mr-2 text-indigo-600"></i> Historial de Tickets</h3>
+                
+                <div x-show="purchaseHistory.length === 0" class="text-center text-gray-400 py-4">
+                    <i class="fas fa-box-open text-3xl mb-2 text-gray-300"></i>
+                    <p class="text-sm">Aún no hay tickets guardados.</p>
+                </div>
+
+                <ul class="space-y-3">
+                    <template x-for="(ticket, index) in purchaseHistory.slice().reverse()" :key="ticket.id">
+                        <li class="p-3 bg-gray-50 border border-gray-200 rounded-lg shadow-sm">
+                            <div class="flex justify-between items-start mb-1">
+                                <span class="font-bold text-gray-800 text-sm" x-text="`${ticket.city}, ${ticket.country}`"></span>
+                                <span class="font-bold text-indigo-700 text-base" x-text="`${ticket.total.toFixed(2)} ${ticket.currency}`"></span>
+                            </div>
+                            <div class="flex justify-between items-center text-xs text-gray-500 mb-3">
+                                <span x-text="new Date(ticket.date).toLocaleDateString()"></span>
+                                <span x-text="ticket.listName"></span>
+                            </div>
+                            <div class="flex justify-end gap-2 border-t border-gray-200 pt-2">
+                                <button @click="editTicket(purchaseHistory.length - 1 - index)" class="text-xs bg-indigo-100 text-indigo-600 px-3 py-1.5 rounded font-medium hover:bg-indigo-200">
+                                    <i class="fas fa-pen mr-1"></i> Editar
+                                </button>
+                                <button @click="deleteTicket(purchaseHistory.length - 1 - index)" class="text-xs bg-red-100 text-red-600 px-3 py-1.5 rounded font-medium hover:bg-red-200">
+                                    <i class="fas fa-trash mr-1"></i> Borrar
+                                </button>
+                            </div>
+                        </li>
+                    </template>
+                </ul>
+            </div>
+
+            <!-- Gráficos -->
+            <div class="bg-white p-5 rounded-xl shadow-sm border-t-4 border-emerald-500" x-show="purchaseHistory.length > 0">
+                <h3 class="font-bold text-gray-800 text-lg mb-2"><i class="fas fa-chart-pie mr-2 text-emerald-600"></i> Análisis de Precios</h3>
+                
+                <div class="mb-4">
+                    <label class="text-xs font-bold text-gray-600">Moneda del Gráfico:</label>
+                    <select x-model="chartCurrency" @change="updateCharts()" class="w-full p-2 mt-1 rounded border border-gray-300 text-sm outline-none">
+                        <option value="€">Euros (€)</option>
+                        <option value="$">Dólares ($)</option>
+                        <option value="£">Libras (£)</option>
+                    </select>
+                </div>
+
+                <!-- Gráfico de Comparativa por Categoría y Ciudad -->
+                <div class="mb-6">
+                    <label class="text-xs font-bold text-gray-600">Comparativa de Precios por Ciudad:</label>
+                    <select x-model="chartCategory" @change="updateCharts()" class="w-full p-2 mt-1 mb-3 rounded border border-gray-300 text-sm outline-none">
+                        <template x-for="cat in categories" :key="cat">
+                            <option :value="cat" x-text="cat"></option>
+                        </template>
+                    </select>
+                    <div class="relative h-48 w-full">
+                        <canvas id="barChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Gráfico de Gasto Total -->
+                <div>
+                    <h4 class="text-xs font-bold text-gray-600 mb-2">Gasto Histórico por Categoría:</h4>
+                    <div class="relative h-48 w-full">
+                        <canvas id="doughnutChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- PESTAÑA: MENÚ SEMANAL -->
+        <div x-show="currentTab === 'menu'" x-transition.opacity class="space-y-6">
+            
+            <div class="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                <h3 class="font-bold text-gray-800 text-lg"><i class="fas fa-calendar-alt mr-2 text-emerald-600"></i> Mi Menú</h3>
+                <button @click="restoreOriginalMenu()" class="text-xs bg-orange-100 text-orange-700 border border-orange-200 px-3 py-2 rounded font-bold hover:bg-orange-200 transition">
+                    <i class="fas fa-undo mr-1"></i> Original
+                </button>
+            </div>
+
+            <!-- Menú Visual Editable -->
+            <div class="space-y-4">
+                <template x-for="(day, index) in menu" :key="index">
+                    <div class="bg-white p-4 rounded-xl shadow-sm border-l-4 border-emerald-500 relative transition-all" :class="{'ring-2 ring-emerald-300': day.isEditing}">
+                        
+                        <!-- Controles de Edición Superior -->
+                        <div class="absolute top-2 right-2 flex gap-1">
+                            <button x-show="!day.isEditing" @click="day.isEditing = true" class="text-gray-400 hover:text-indigo-500 p-2 transition">
+                                <i class="fas fa-pen"></i>
+                            </button>
+                            <button x-show="day.isEditing" @click="day.isEditing = false" class="text-emerald-500 hover:text-emerald-700 p-2 transition">
+                                <i class="fas fa-check"></i>
+                            </button>
+                            <button @click="deleteDay(index)" class="text-gray-300 hover:text-red-500 p-2 transition">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+
+                        <h3 class="font-bold text-lg text-emerald-800 mb-3 uppercase" x-text="day.day"></h3>
+                        
+                        <!-- Vista Normal -->
+                        <ul x-show="!day.isEditing" class="space-y-3 text-gray-700">
+                            <li class="flex items-start">
+                                <div class="bg-yellow-100 p-1.5 rounded-md mr-3 text-yellow-600 mt-0.5"><i class="fas fa-sun w-4 text-center"></i></div>
+                                <span class="font-medium text-sm" x-text="day.lunch"></span>
+                            </li>
+                            <li class="flex items-start">
+                                <div class="bg-indigo-100 p-1.5 rounded-md mr-3 text-indigo-500 mt-0.5"><i class="fas fa-moon w-4 text-center"></i></div>
+                                <span class="font-medium text-sm" x-text="day.dinner"></span>
+                            </li>
+                        </ul>
+
+                        <!-- Modo Edición -->
+                        <div x-show="day.isEditing" class="space-y-3 mt-2">
+                            <div>
+                                <label class="text-[10px] uppercase font-bold text-yellow-600 flex items-center mb-1"><i class="fas fa-sun mr-1"></i> Comida</label>
+                                <input type="text" x-model="day.lunch" class="w-full p-2 rounded border border-gray-300 text-sm outline-none focus:border-emerald-500">
+                            </div>
+                            <div>
+                                <label class="text-[10px] uppercase font-bold text-indigo-500 flex items-center mb-1"><i class="fas fa-moon mr-1"></i> Cena</label>
+                                <input type="text" x-model="day.dinner" class="w-full p-2 rounded border border-gray-300 text-sm outline-none focus:border-emerald-500">
+                            </div>
+                            <button @click="day.isEditing = false" class="w-full mt-2 bg-emerald-100 text-emerald-700 font-bold py-2 rounded text-sm hover:bg-emerald-200 transition">
+                                Guardar cambios
+                            </button>
+                        </div>
+                    </div>
+                </template>
+            </div>
+            
+            <!-- Añadir nuevo día -->
+            <div class="bg-gray-50 border-2 border-dashed border-gray-300 p-4 rounded-xl mt-4">
+                <h4 class="font-bold text-gray-700 mb-3"><i class="fas fa-plus-circle mr-1"></i> Añadir día extra</h4>
+                <div class="space-y-2">
+                    <input x-model="newMenu.day" type="text" placeholder="Nombre del Día (ej. Festivo)" class="w-full p-2 rounded border border-gray-300 outline-none text-sm">
+                    <button @click="addMenuDay()" class="w-full bg-gray-200 text-gray-700 font-bold p-2 rounded hover:bg-gray-300 transition text-sm">Añadir Día</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- PESTAÑA: GESTIÓN DE LISTAS Y PRODUCTOS -->
+        <div x-show="currentTab === 'gestion'" x-transition.opacity class="space-y-6">
+            
+            <div class="bg-white p-5 rounded-xl shadow-sm border-t-4 border-emerald-500">
+                <h3 class="font-bold text-gray-800 text-lg mb-4"><i class="fas fa-cogs mr-2 text-emerald-600"></i> Gestión General</h3>
+                
+                <!-- Selector de Lista Activa -->
+                <div class="mb-6 bg-emerald-50 p-3 rounded-lg border border-emerald-100">
+                    <label class="text-xs font-bold text-emerald-800 mb-2 block uppercase tracking-wide">Seleccionar Lista Actual:</label>
+                    <select x-model="activeListId" class="w-full bg-white text-emerald-700 font-bold text-base rounded-lg px-3 py-2 outline-none border border-emerald-300 shadow-sm cursor-pointer">
+                        <template x-for="list in lists" :key="list.id">
+                            <option :value="list.id" x-text="list.name"></option>
+                        </template>
+                    </select>
+                </div>
+
+                <!-- Gestión de Listas -->
+                <div class="mb-6 border-b border-gray-100 pb-4">
+                    <label class="text-xs font-bold text-gray-600 mb-2 block uppercase tracking-wide">Editar / Crear Listas</label>
+                    <ul class="space-y-2 mb-3">
+                        <template x-for="list in lists" :key="list.id">
+                            <li class="flex justify-between items-center bg-gray-50 p-2 rounded border border-gray-200">
+                                <span class="font-medium text-sm text-gray-700 flex-1" x-text="list.name"></span>
+                                <button @click="editListName(list)" class="text-indigo-500 p-1 mx-1 hover:text-indigo-700"><i class="fas fa-pen"></i></button>
+                                <button x-show="lists.length > 1" @click="deleteList(list.id)" class="text-red-400 p-1 hover:text-red-600"><i class="fas fa-trash"></i></button>
+                            </li>
+                        </template>
+                    </ul>
+                    <div class="flex gap-2">
+                        <input x-model="newListName" type="text" placeholder="Nueva lista..." class="flex-1 p-2 rounded border border-gray-300 text-sm outline-none">
+                        <button @click="createList()" class="bg-emerald-600 text-white px-3 rounded font-bold shadow text-sm">Crear</button>
+                    </div>
+                </div>
+
+                <!-- Restaurar Datos Perdidos -->
+                <div>
+                    <label class="text-xs font-bold text-gray-600 mb-2 block uppercase tracking-wide">Restaurar Alimentos</label>
+                    <button @click="restoreDefaultItems()" class="w-full bg-indigo-50 text-indigo-700 border border-indigo-200 py-2.5 rounded-lg font-bold text-sm hover:bg-indigo-100 transition shadow-sm">
+                        <i class="fas fa-sync-alt mr-1"></i> Recuperar Lista Inicial
+                    </button>
+                    <p class="text-[10px] text-gray-400 mt-1.5 leading-tight">Añade a tu lista actual los ingredientes de la semana original sin borrar lo que ya tengas.</p>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Modal Finalizar / Editar Compra -->
+    <div x-show="showCheckoutModal || showEditModal" class="fixed inset-0 bg-black/60 z-50 flex justify-center items-center p-4" x-transition x-cloak>
+        <div class="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl relative">
+            <button @click="closeModals()" class="absolute top-4 right-4 text-gray-400 hover:text-gray-600"><i class="fas fa-times text-xl"></i></button>
+            
+            <h3 class="text-xl font-bold mb-2 text-gray-800">
+                <i class="fas" :class="showEditModal ? 'fa-pen text-indigo-600' : 'fa-receipt text-emerald-600'" class="mr-2"></i>
+                <span x-text="showEditModal ? 'Editar Ticket' : 'Registrar Compra'"></span>
+            </h3>
+            
+            <div class="space-y-4 mt-4">
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="text-xs font-bold text-gray-700 uppercase">País</label>
+                        <input type="text" x-model="checkout.country" class="w-full border border-gray-300 p-2.5 rounded-lg mt-1 outline-none text-sm">
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-gray-700 uppercase">Ciudad</label>
+                        <input type="text" x-model="checkout.city" class="w-full border border-gray-300 p-2.5 rounded-lg mt-1 outline-none text-sm">
+                    </div>
+                </div>
+                <div class="grid grid-cols-3 gap-3">
+                    <div class="col-span-1">
+                        <label class="text-xs font-bold text-gray-700 uppercase">Moneda</label>
+                        <select x-model="checkout.currency" class="w-full border border-gray-300 p-2.5 rounded-lg mt-1 outline-none bg-white text-sm font-bold">
+                            <option value="€">Euros (€)</option>
+                            <option value="$">Dólares ($)</option>
+                            <option value="£">Libras (£)</option>
+                        </select>
+                    </div>
+                    <div class="col-span-2">
+                        <label class="text-xs font-bold text-gray-700 uppercase">Total</label>
+                        <input type="number" step="0.01" x-model.number="checkout.total" class="w-full border border-gray-300 p-2.5 rounded-lg mt-1 outline-none font-bold text-lg text-emerald-700">
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-6">
+                <button @click="showEditModal ? saveEditTicket() : saveCheckout()" class="w-full text-white font-bold py-3.5 rounded-xl shadow-lg active:scale-95 transition"
+                        :class="showEditModal ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-emerald-600 hover:bg-emerald-700'">
+                    <span x-text="showEditModal ? 'Guardar Cambios' : 'Guardar y Limpiar Lista'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bottom Navigation (4 Tabs) -->
+    <nav class="bg-white border-t border-gray-200 fixed bottom-0 w-full z-30 shadow-[0_-4px_15px_rgba(0,0,0,0.05)] pb-safe">
+        <div class="flex justify-around">
+            <button @click="switchTab('compra')" :class="{'text-emerald-600': currentTab === 'compra', 'text-gray-400': currentTab !== 'compra'}" class="flex-1 py-3 text-center transition-colors">
+                <i class="fas fa-shopping-cart text-xl mb-1 block"></i>
+                <span class="text-[9px] font-bold uppercase tracking-wide">Comprar</span>
+            </button>
+            <button @click="switchTab('analisis')" :class="{'text-emerald-600': currentTab === 'analisis', 'text-gray-400': currentTab !== 'analisis'}" class="flex-1 py-3 text-center transition-colors">
+                <i class="fas fa-chart-pie text-xl mb-1 block"></i>
+                <span class="text-[9px] font-bold uppercase tracking-wide">Análisis</span>
+            </button>
+            <button @click="switchTab('menu')" :class="{'text-emerald-600': currentTab === 'menu', 'text-gray-400': currentTab !== 'menu'}" class="flex-1 py-3 text-center transition-colors">
+                <i class="fas fa-utensils text-xl mb-1 block"></i>
+                <span class="text-[9px] font-bold uppercase tracking-wide">Menú</span>
+            </button>
+            <button @click="switchTab('gestion')" :class="{'text-emerald-600': currentTab === 'gestion', 'text-gray-400': currentTab !== 'gestion'}" class="flex-1 py-3 text-center transition-colors">
+                <i class="fas fa-cogs text-xl mb-1 block"></i>
+                <span class="text-[9px] font-bold uppercase tracking-wide">Gestión</span>
+            </button>
+        </div>
+    </nav>
+
+    <script>
+        let barChartInstance = null;
+        let doughnutChartInstance = null;
+
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('appData', () => ({
+                currentTab: 'compra',
+                activeListId: 1,
+                quickItemName: '',
+                quickItemCategory: 'Despensa',
+                newListName: '',
+                showCheckoutModal: false,
+                showEditModal: false,
+                editingTicketIndex: null,
+                
+                chartCurrency: '€',
+                chartCategory: 'Carne',
+
+                tabs: {
+                    'compra': { title: 'Comprar' },
+                    'analisis': { title: 'Análisis y Tickets' },
+                    'menu': { title: 'Menú Semanal' },
+                    'gestion': { title: 'Configuración' }
+                },
+                categories: ['Verdura', 'Fruta', 'Carne', 'Pescado', 'Lácteos y Huevos', 'Despensa', 'Limpieza y Otros'],
+                
+                checkout: { country: 'España', city: 'Madrid', total: 0, currency: '€' },
+                purchaseHistory: [],
+                lists: [],
+                menu: [],
+                newMenu: { day: '', lunch: '', dinner: '', isEditing: false },
+
+                defaultMenu: [
+                    { day: 'Lunes', lunch: 'Pasta con tomate, melva y huevo', dinner: 'Ternera + patata cocida/zanahoria', isEditing: false },
+                    { day: 'Martes', lunch: 'Arroz con pollo (soja+miel / yogur+limon / salsa queso)', dinner: 'Pavo + pure (patata + zanahoria + ajo + pimenton)', isEditing: false },
+                    { day: 'Miércoles', lunch: 'Ensalada garbanzos (huevos atun)', dinner: 'Pollo + patata/boniato', isEditing: false },
+                    { day: 'Jueves', lunch: 'Guisantes con jamon y huevo', dinner: 'Soja wok/salteado de pollo + verduras (pimiento plancha)', isEditing: false },
+                    { day: 'Viernes', lunch: 'Arroz con salmón pimiento/boniato y soja/yogur', dinner: 'Chitmil', isEditing: false },
+                    { day: 'Sábado', lunch: 'Pasta carbonara/pesto etc', dinner: 'Sobras/pizza', isEditing: false },
+                    { day: 'Domingo', lunch: 'Filete ternera con patatas fritas + salsa queso azul', dinner: 'Huevos revueltos con queso, pavo y sobras de verdura', isEditing: false }
+                ],
+
+                defaultListItems: [
+                    { id: 1, name: 'Zanahorias', category: 'Verdura', checked: false, price: null, unit: 'total', qty: 1 },
+                    { id: 2, name: 'Tomates', category: 'Verdura', checked: false, price: null, unit: 'total', qty: 1 },
+                    { id: 3, name: 'Calabacín', category: 'Verdura', checked: false, price: null, unit: 'total', qty: 1 },
+                    { id: 4, name: 'Patatas y Boniato', category: 'Verdura', checked: false, price: null, unit: 'total', qty: 1 },
+                    { id: 5, name: 'Judías verdes', category: 'Verdura', checked: false, price: null, unit: 'total', qty: 1 },
+                    { id: 10, name: 'Fresas y Cerezas', category: 'Fruta', checked: false, price: null, unit: 'total', qty: 1 },
+                    { id: 11, name: 'Albaricoques', category: 'Fruta', checked: false, price: null, unit: 'total', qty: 1 },
+                    { id: 12, name: 'Naranjas (zumo)', category: 'Fruta', checked: false, price: null, unit: 'total', qty: 1 },
+                    { id: 14, name: 'Ternera (2)', category: 'Carne', checked: false, price: null, unit: 'total', qty: 1 },
+                    { id: 15, name: 'Pollo (3)', category: 'Carne', checked: false, price: null, unit: 'total', qty: 1 },
+                    { id: 16, name: 'Cerdo', category: 'Carne', checked: false, price: null, unit: 'total', qty: 1 },
+                    { id: 17, name: 'Pavo y Jamón', category: 'Carne', checked: false, price: null, unit: 'total', qty: 1 },
+                    { id: 18, name: 'Melva / Atún', category: 'Pescado', checked: false, price: null, unit: 'total', qty: 1 },
+                    { id: 19, name: 'Salmón', category: 'Pescado', checked: false, price: null, unit: 'total', qty: 1 },
+                    { id: 20, name: 'Huevos (10)', category: 'Lácteos y Huevos', checked: false, price: null, unit: 'total', qty: 1 },
+                    { id: 22, name: 'Queso y Queso azul', category: 'Lácteos y Huevos', checked: false, price: null, unit: 'total', qty: 1 },
+                    { id: 24, name: 'Arroz (3-5)', category: 'Despensa', checked: false, price: null, unit: 'total', qty: 1 },
+                    { id: 25, name: 'Pasta (2)', category: 'Despensa', checked: false, price: null, unit: 'total', qty: 1 },
+                    { id: 26, name: 'Garbanzos', category: 'Despensa', checked: false, price: null, unit: 'total', qty: 1 },
+                    { id: 27, name: 'Lentejas', category: 'Despensa', checked: false, price: null, unit: 'total', qty: 1 },
+                    { id: 28, name: 'Guisantes', category: 'Despensa', checked: false, price: null, unit: 'total', qty: 1 }
+                ],
+
+                init() {
+                    this.loadData();
+                    
+                    this.$watch('lists', (val) => localStorage.setItem('mi_app_listas_v5', JSON.stringify(val)), { deep: true });
+                    this.$watch('menu', (val) => localStorage.setItem('mi_menu_semanal_v5', JSON.stringify(val)), { deep: true });
+                    this.$watch('purchaseHistory', (val) => localStorage.setItem('mi_app_historial_v5', JSON.stringify(val)), { deep: true });
+                },
+
+                switchTab(tab) {
+                    this.currentTab = tab;
+                    if(tab === 'analisis') {
+                        setTimeout(() => { this.updateCharts(); }, 100);
+                    }
+                },
+
+                loadData() {
+                    const hist = localStorage.getItem('mi_app_historial_v5');
+                    if(hist) this.purchaseHistory = JSON.parse(hist);
+
+                    const m = localStorage.getItem('mi_menu_semanal_v5');
+                    if(m) {
+                        let parsedMenu = JSON.parse(m);
+                        this.menu = parsedMenu.map(d => ({...d, isEditing: false}));
+                    } else {
+                        this.menu = JSON.parse(JSON.stringify(this.defaultMenu)); 
+                    }
+
+                    const savedLists = localStorage.getItem('mi_app_listas_v5');
+                    if (savedLists) {
+                        this.lists = JSON.parse(savedLists);
+                        if(this.lists.length === 1 && this.lists[0].items.length === 0) {
+                            this.lists[0].items = JSON.parse(JSON.stringify(this.defaultListItems));
+                        }
+                        if(this.lists.length > 0) this.activeListId = this.lists[0].id;
+                    } else {
+                        this.lists = [{ id: 1, name: 'Mi Compra Principal', items: JSON.parse(JSON.stringify(this.defaultListItems)) }];
+                    }
+                },
+
+                restoreOriginalMenu() {
+                    if(confirm("¿Restaurar el menú original de Lunes a Domingo? Se borrarán los días que hayas creado nuevos.")) {
+                        this.menu = JSON.parse(JSON.stringify(this.defaultMenu));
+                    }
+                },
+
+                restoreDefaultItems() {
+                    if(confirm("Esto añadirá los productos iniciales de tu semana a la lista que tengas activa. ¿Continuar?")) {
+                        const currentList = this.lists.find(l => l.id === this.activeListId);
+                        const initialItems = JSON.parse(JSON.stringify(this.defaultListItems));
+                        
+                        initialItems.forEach(initialItem => {
+                            const exists = currentList.items.find(i => i.name.toLowerCase() === initialItem.name.toLowerCase());
+                            if(!exists) {
+                                initialItem.id = Date.now() + Math.random();
+                                currentList.items.push(initialItem);
+                            }
+                        });
+                        alert("¡Alimentos añadidos a la lista actual!");
+                    }
+                },
+
+                get activeItems() {
+                    const list = this.lists.find(l => l.id === this.activeListId);
+                    return list ? list.items : [];
+                },
+
+                get groupedList() {
+                    const groups = {};
+                    this.activeItems.forEach(item => {
+                        if (!groups[item.category]) groups[item.category] = [];
+                        groups[item.category].push(item);
+                    });
+                    
+                    const sortedGroups = {};
+                    this.categories.forEach(cat => {
+                        if(groups[cat]) sortedGroups[cat] = groups[cat];
+                    });
+                    return sortedGroups;
+                },
+
+                getItemCost(item) {
+                    let p = parseFloat(item.price) || 0;
+                    if(item.unit === 'total') return p;
+                    let q = parseFloat(item.qty) || 1;
+                    return p * q;
+                },
+
+                createList() {
+                    if(!this.newListName.trim()) return;
+                    const newId = Date.now();
+                    this.lists.push({ id: newId, name: this.newListName, items: [] });
+                    this.newListName = '';
+                    this.activeListId = newId;
+                },
+
+                editListName(list) {
+                    const newName = prompt("Nuevo nombre para la lista:", list.name);
+                    if(newName && newName.trim() !== "") {
+                        list.name = newName.trim();
+                    }
+                },
+
+                deleteList(id) {
+                    if(this.lists.length <= 1) return alert('Debes tener al menos una lista.');
+                    if(confirm("¿Borrar esta lista entera? Perderás los productos que haya en ella.")) {
+                        this.lists = this.lists.filter(l => l.id !== id);
+                        this.activeListId = this.lists[0].id;
+                    }
+                },
+
+                addQuickItem() {
+                    if (!this.quickItemName.trim()) return;
+                    this.lists.find(l => l.id === this.activeListId).items.push({
+                        id: Date.now(), name: this.quickItemName, category: this.quickItemCategory, checked: false, price: null, unit: 'total', qty: 1
+                    });
+                    this.quickItemName = '';
+                },
+
+                deleteItem(itemId) {
+                    const currentList = this.lists.find(l => l.id === this.activeListId);
+                    currentList.items = currentList.items.filter(i => i.id !== itemId);
+                },
+
+                uncheckAll() {
+                    if(confirm("¿Desmarcar todos los productos de esta lista?")) {
+                        this.lists.find(l => l.id === this.activeListId).items.forEach(i => i.checked = false);
+                    }
+                },
+
+                addMenuDay() {
+                    if (!this.newMenu.day.trim()) return;
+                    this.menu.push({ day: this.newMenu.day, lunch: '', dinner: '', isEditing: true });
+                    this.newMenu.day = '';
+                },
+
+                deleteDay(index) {
+                    if(confirm("¿Eliminar este día del menú?")) {
+                        this.menu.splice(index, 1);
+                    }
+                },
+
+                openCheckout() {
+                    const checkedItems = this.activeItems.filter(i => i.checked);
+                    if(checkedItems.length === 0) return alert("No has marcado ningún producto en la lista.");
+                    
+                    const total = checkedItems.reduce((sum, item) => sum + this.getItemCost(item), 0);
+                    
+                    this.checkout = { country: 'España', city: 'Madrid', total: total > 0 ? parseFloat(total.toFixed(2)) : 0, currency: '€' };
+                    this.showCheckoutModal = true;
+                },
+
+                saveCheckout() {
+                    const currentList = this.lists.find(l => l.id === this.activeListId);
+                    const checkedItems = currentList.items.filter(i => i.checked);
+
+                    this.purchaseHistory.push({
+                        id: Date.now(),
+                        date: new Date().toISOString(),
+                        listName: currentList.name,
+                        country: this.checkout.country,
+                        city: this.checkout.city,
+                        currency: this.checkout.currency,
+                        total: parseFloat(this.checkout.total || 0),
+                        items: checkedItems.map(i => ({name: i.name, price: parseFloat(i.price||0), unit: i.unit, qty: parseFloat(i.qty||1), category: i.category, cost: this.getItemCost(i)}))
+                    });
+
+                    currentList.items.forEach(i => i.checked = false);
+                    this.closeModals();
+                    this.switchTab('analisis');
+                },
+
+                deleteTicket(index) {
+                    if(confirm("¿Estás seguro de que quieres borrar este ticket del historial? Esto afectará a los gráficos.")) {
+                        this.purchaseHistory.splice(index, 1);
+                        this.updateCharts();
+                    }
+                },
+
+                editTicket(index) {
+                    this.editingTicketIndex = index;
+                    const t = this.purchaseHistory[index];
+                    this.checkout = { country: t.country, city: t.city, total: t.total, currency: t.currency };
+                    this.showEditModal = true;
+                },
+
+                saveEditTicket() {
+                    if(this.editingTicketIndex !== null) {
+                        const t = this.purchaseHistory[this.editingTicketIndex];
+                        t.country = this.checkout.country;
+                        t.city = this.checkout.city;
+                        t.total = parseFloat(this.checkout.total);
+                        t.currency = this.checkout.currency;
+                        this.editingTicketIndex = null;
+                        this.closeModals();
+                        this.updateCharts();
+                    }
+                },
+
+                closeModals() {
+                    this.showCheckoutModal = false;
+                    this.showEditModal = false;
+                },
+
+                updateCharts() {
+                    if(this.purchaseHistory.length === 0) return;
+                    
+                    const filteredTickets = this.purchaseHistory.filter(t => t.currency === this.chartCurrency);
+
+                    const cityPrices = {}; 
+                    filteredTickets.forEach(ticket => {
+                        const city = ticket.city;
+                        if(!cityPrices[city]) cityPrices[city] = [];
+                        
+                        ticket.items.forEach(item => {
+                            if(item.category === this.chartCategory && item.price > 0) {
+                                cityPrices[city].push(item.price); 
+                            }
+                        });
+                    });
+
+                    const labelsBar = Object.keys(cityPrices);
+                    const dataBar = labelsBar.map(city => {
+                        const prices = cityPrices[city];
+                        if(prices.length === 0) return 0;
+                        const sum = prices.reduce((a,b) => a+b, 0);
+                        return (sum / prices.length).toFixed(2);
+                    });
+
+                    if(barChartInstance) barChartInstance.destroy();
+                    const ctxBar = document.getElementById('barChart');
+                    if(ctxBar) {
+                        barChartInstance = new Chart(ctxBar, {
+                            type: 'bar',
+                            data: {
+                                labels: labelsBar,
+                                datasets: [{
+                                    label: `Precio medio ${this.chartCategory} (${this.chartCurrency})`,
+                                    data: dataBar,
+                                    backgroundColor: 'rgba(16, 185, 129, 0.7)',
+                                    borderColor: 'rgba(16, 185, 129, 1)',
+                                    borderWidth: 1,
+                                    borderRadius: 4
+                                }]
+                            },
+                            options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }
+                        });
+                    }
+
+                    const catSpending = {};
+                    this.categories.forEach(c => catSpending[c] = 0);
+                    
+                    filteredTickets.forEach(ticket => {
+                        ticket.items.forEach(item => {
+                            if(catSpending[item.category] !== undefined) {
+                                catSpending[item.category] += item.cost;
+                            }
+                        });
+                    });
+
+                    const labelsDoughnut = this.categories;
+                    const dataDoughnut = labelsDoughnut.map(c => catSpending[c].toFixed(2));
+
+                    if(doughnutChartInstance) doughnutChartInstance.destroy();
+                    const ctxDoughnut = document.getElementById('doughnutChart');
+                    if(ctxDoughnut) {
+                        doughnutChartInstance = new Chart(ctxDoughnut, {
+                            type: 'doughnut',
+                            data: {
+                                labels: labelsDoughnut,
+                                datasets: [{
+                                    data: dataDoughnut,
+                                    backgroundColor: [
+                                        '#10b981', '#34d399', '#f87171', '#60a5fa', '#fbbf24', '#a78bfa', '#9ca3af'
+                                    ]
+                                }]
+                            },
+                            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { boxWidth: 12, font:{size:10} } } } }
+                        });
+                    }
+                }
+            }));
+        });
+    </script>
+</body>
+</html>
+
+
