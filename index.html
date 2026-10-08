@@ -307,6 +307,26 @@
                     </button>
                     <p class="text-[10px] text-gray-400 mt-1.5 leading-tight">Añade a tu lista actual los ingredientes de la semana original sin borrar lo que ya tengas.</p>
                 </div>
+
+                <!-- Copia de seguridad -->
+                <div class="mt-6 border-t border-gray-100 pt-4">
+                    <label class="text-xs font-bold text-gray-600 mb-2 block uppercase tracking-wide">Copia de seguridad</label>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button @click="exportBackup()" class="bg-emerald-50 text-emerald-700 border border-emerald-200 py-2.5 rounded-lg font-bold text-sm hover:bg-emerald-100 transition shadow-sm">
+                            <i class="fas fa-download mr-1"></i> Exportar
+                        </button>
+                        <label class="bg-indigo-50 text-indigo-700 border border-indigo-200 py-2.5 rounded-lg font-bold text-sm hover:bg-indigo-100 transition shadow-sm text-center cursor-pointer">
+                            <i class="fas fa-upload mr-1"></i> Importar
+                            <input id="backupFile" type="file" class="hidden" @change="importFile($event)">
+                        </label>
+                    </div>
+                    <details class="mt-2">
+                        <summary class="text-[11px] text-gray-500 cursor-pointer">¿No puedes elegir el archivo? Pega aquí la copia</summary>
+                        <textarea x-model="backupText" rows="4" class="w-full mt-2 p-2 rounded border border-gray-300 text-xs outline-none focus:border-emerald-500" placeholder='{"app":"mi-compra-inteligente", ...}'></textarea>
+                        <button @click="importBackup(backupText)" class="w-full mt-2 bg-gray-200 text-gray-700 font-bold py-2 rounded text-sm hover:bg-gray-300 transition">Importar texto pegado</button>
+                    </details>
+                    <p class="text-[10px] text-gray-400 mt-1.5 leading-tight">Tus datos se guardan solo en este navegador. Usa una copia para pasarlos a otro móvil, ordenador o navegador. Al importar se reemplazan los datos actuales.</p>
+                </div>
             </div>
         </div>
     </main>
@@ -390,6 +410,7 @@
                 quickItemName: '',
                 quickItemCategory: 'Despensa',
                 newListName: '',
+                backupText: '',
                 showCheckoutModal: false,
                 showEditModal: false,
                 editingTicketIndex: null,
@@ -498,6 +519,77 @@
                             this.activeListId = 1;
                         }
                     }
+                },
+
+                exportBackup() {
+                    const backup = {
+                        app: 'mi-compra-inteligente',
+                        exportado: new Date().toISOString(),
+                        claves: {
+                            'mi_app_listas_v7': JSON.stringify(this.lists),
+                            'mi_menu_semanal_v7': JSON.stringify(this.menu),
+                            'mi_app_historial_v7': JSON.stringify(this.purchaseHistory)
+                        }
+                    };
+                    const blob = new Blob([JSON.stringify(backup)], { type: 'application/json' });
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = `compra_copia_${new Date().toISOString().slice(0, 10)}.json`;
+                    document.body.appendChild(link);
+                    link.click();
+                    link.remove();
+                    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+                },
+
+                importFile(event) {
+                    const file = event.target.files[0];
+                    event.target.value = '';
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = () => this.importBackup(reader.result);
+                    reader.onerror = () => alert('No se pudo leer el archivo.');
+                    reader.readAsText(file);
+                },
+
+                importBackup(text) {
+                    let keys;
+                    try { keys = JSON.parse(text).claves; } catch (e) { keys = null; }
+                    if (!keys || typeof keys !== 'object') return alert('Esto no es una copia de seguridad válida de la app.');
+
+                    // Coge, de cada bloque de datos, la versión más reciente que haya en la copia
+                    const pick = (names) => {
+                        for (const name of names) {
+                            try {
+                                const value = JSON.parse(keys[name]);
+                                if (Array.isArray(value)) return value;
+                            } catch (e) { /* esa versión no está o está dañada: se prueba la anterior */ }
+                        }
+                        return null;
+                    };
+                    const lists = pick(['mi_app_listas_v7', 'mi_app_listas_v6', 'mi_app_listas_v5', 'mi_app_listas_v4', 'mi_app_listas_v3']);
+                    const menu = pick(['mi_menu_semanal_v7', 'mi_menu_semanal_v6', 'mi_menu_semanal_v5', 'mi_menu_semanal_v4']);
+                    const history = pick(['mi_app_historial_v7', 'mi_app_historial_v6', 'mi_app_historial_v5', 'mi_app_historial_v4']);
+
+                    if (!lists && !menu && !history) return alert('La copia no contiene datos de la app.');
+                    if (lists && (lists.length === 0 || !lists.every(l => l && Array.isArray(l.items)))) return alert('Las listas de la copia están dañadas. No se ha importado nada.');
+                    if (history && !history.every(t => t && Array.isArray(t.items))) return alert('El historial de la copia está dañado. No se ha importado nada.');
+                    if (menu && !menu.every(d => d && typeof d.day === 'string')) return alert('El menú de la copia está dañado. No se ha importado nada.');
+
+                    const resumen = [
+                        lists ? `${lists.length} lista(s)` : null,
+                        history ? `${history.length} ticket(s)` : null,
+                        menu ? `${menu.length} día(s) de menú` : null
+                    ].filter(Boolean).join(', ');
+                    if (!confirm(`La copia contiene: ${resumen}.\n\nSe reemplazarán los datos que tengas ahora en este navegador. ¿Continuar?`)) return;
+
+                    if (lists) {
+                        this.lists = lists;
+                        this.activeListId = Number(lists[0].id);
+                    }
+                    if (history) this.purchaseHistory = history;
+                    if (menu) this.menu = menu.map(d => ({ ...d, isEditing: false }));
+                    this.backupText = '';
+                    alert('¡Copia importada!');
                 },
 
                 restoreOriginalMenu() {

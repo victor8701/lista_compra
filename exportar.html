@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#10b981">
+    <title>Exportar mis datos</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; padding: 16px; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: #f3f4f6; color: #1f2937; }
+        main { max-width: 480px; margin: 0 auto; }
+        h1 { font-size: 1.25rem; margin: 0 0 4px; color: #047857; }
+        p { margin: 8px 0; font-size: 0.9rem; line-height: 1.4; }
+        .card { background: #fff; border-radius: 12px; padding: 16px; margin-top: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+        .ok { border-top: 4px solid #10b981; }
+        .error { border-top: 4px solid #ef4444; }
+        ul { margin: 8px 0; padding-left: 20px; font-size: 0.9rem; }
+        button { display: block; width: 100%; margin-top: 10px; padding: 14px; border: 0; border-radius: 10px; font-size: 1rem; font-weight: 700; color: #fff; background: #059669; }
+        button.secundario { background: #4f46e5; }
+        textarea { width: 100%; height: 120px; margin-top: 10px; padding: 8px; font-size: 0.75rem; font-family: monospace; border: 1px solid #d1d5db; border-radius: 8px; }
+        .aviso { font-size: 0.8rem; color: #6b7280; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+<main>
+    <h1>Exportar mis datos</h1>
+    <p>Abre esta página <strong>desde el mismo sitio donde abrías tu app de la compra</strong> (mismo navegador y misma carpeta). Aquí se leen los datos que la app guardó en este navegador y se preparan para llevarlos a otro sitio.</p>
+
+    <div id="resultado" class="card"></div>
+
+    <div id="acciones" class="card hidden">
+        <p><strong>Paso 1.</strong> Descarga la copia o cópiala:</p>
+        <button id="descargar" type="button">Descargar copia (.json)</button>
+        <button id="copiar" type="button" class="secundario">Copiar al portapapeles</button>
+        <p id="estado" class="aviso" role="status"></p>
+        <p><strong>Paso 2.</strong> Abre tu web, ve a <em>Gestión → Copia de seguridad</em> y pulsa <em>Importar</em> (o pega el texto).</p>
+        <textarea id="texto" readonly aria-label="Contenido de la copia"></textarea>
+    </div>
+</main>
+
+<script>
+    // Mismas claves que usa la app, de la versión más reciente a la más antigua
+    const BLOQUES = {
+        listas: ['mi_app_listas_v7', 'mi_app_listas_v6', 'mi_app_listas_v5', 'mi_app_listas_v4', 'mi_app_listas_v3'],
+        historial: ['mi_app_historial_v7', 'mi_app_historial_v6', 'mi_app_historial_v5', 'mi_app_historial_v4'],
+        menu: ['mi_menu_semanal_v7', 'mi_menu_semanal_v6', 'mi_menu_semanal_v5', 'mi_menu_semanal_v4']
+    };
+
+    const resultado = document.getElementById('resultado');
+    const acciones = document.getElementById('acciones');
+    const estado = document.getElementById('estado');
+    const texto = document.getElementById('texto');
+    let contenido = '';
+
+    function mostrarError(titulo, detalle) {
+        resultado.className = 'card error';
+        resultado.innerHTML = '';
+        const h = document.createElement('strong');
+        h.textContent = titulo;
+        const p = document.createElement('p');
+        p.textContent = detalle;
+        resultado.append(h, p);
+    }
+
+    function leerBloque(claves, nombres) {
+        for (const nombre of nombres) {
+            try {
+                const valor = JSON.parse(claves[nombre]);
+                if (Array.isArray(valor)) return valor;
+            } catch (e) { /* no existe o está dañada: se prueba la anterior */ }
+        }
+        return null;
+    }
+
+    function leerDatos() {
+        const claves = {};
+        for (let i = 0; i < localStorage.length; i++) {
+            const clave = localStorage.key(i);
+            if (clave.startsWith('mi_')) claves[clave] = localStorage.getItem(clave);
+        }
+        return claves;
+    }
+
+    function iniciar() {
+        let claves;
+        try {
+            claves = leerDatos();
+        } catch (e) {
+            return mostrarError('No se puede leer el almacenamiento del navegador', 'Prueba a abrir esta página en Chrome, no desde dentro de otra aplicación.');
+        }
+
+        if (Object.keys(claves).length === 0) {
+            return mostrarError(
+                'No hay datos de la app en este sitio',
+                'Este navegador no tiene guardada ninguna lista aquí. Guarda este archivo en la misma carpeta que tu archivo de la app y ábrelo igual que lo abrías (mismo navegador y mismo tipo de enlace).'
+            );
+        }
+
+        const listas = leerBloque(claves, BLOQUES.listas) || [];
+        const historial = leerBloque(claves, BLOQUES.historial) || [];
+        const menu = leerBloque(claves, BLOQUES.menu) || [];
+
+        resultado.className = 'card ok';
+        resultado.innerHTML = '';
+        const titulo = document.createElement('strong');
+        titulo.textContent = 'Datos encontrados';
+        const lista = document.createElement('ul');
+        const filas = listas.map(l => `Lista «${l.name}»: ${Array.isArray(l.items) ? l.items.length : 0} productos`);
+        filas.push(`${historial.length} ticket(s) en el historial`, `${menu.length} día(s) de menú`);
+        for (const fila of filas) {
+            const li = document.createElement('li');
+            li.textContent = fila;
+            lista.append(li);
+        }
+        resultado.append(titulo, lista);
+
+        contenido = JSON.stringify({ app: 'mi-compra-inteligente', exportado: new Date().toISOString(), claves });
+        texto.value = contenido;
+        acciones.classList.remove('hidden');
+    }
+
+    document.getElementById('descargar').addEventListener('click', () => {
+        const enlace = document.createElement('a');
+        enlace.href = URL.createObjectURL(new Blob([contenido], { type: 'application/json' }));
+        enlace.download = `compra_copia_${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(enlace);
+        enlace.click();
+        enlace.remove();
+        setTimeout(() => URL.revokeObjectURL(enlace.href), 1000);
+        estado.textContent = 'Descarga iniciada. Búscala en la carpeta Descargas.';
+    });
+
+    document.getElementById('copiar').addEventListener('click', async () => {
+        try {
+            await navigator.clipboard.writeText(contenido);
+        } catch (e) {
+            texto.focus();
+            texto.select();
+            if (!document.execCommand('copy')) {
+                estado.textContent = 'No se pudo copiar solo. Mantén pulsado en el recuadro de abajo y elige «Copiar todo».';
+                return;
+            }
+        }
+        estado.textContent = 'Copiado. Ya puedes pegarlo en la app.';
+    });
+
+    iniciar();
+</script>
+</body>
+</html>
