@@ -560,19 +560,41 @@
                     } catch (e) { keys = null; }
                     if (!keys || typeof keys !== 'object') return alert('Esto no es una copia de seguridad válida de la app.');
 
-                    // Coge, de cada bloque de datos, la versión más reciente que haya en la copia
-                    const pick = (names) => {
-                        for (const name of names) {
-                            try {
-                                const value = JSON.parse(keys[name]);
-                                if (Array.isArray(value)) return value;
-                            } catch (e) { /* esa versión no está o está dañada: se prueba la anterior */ }
-                        }
+                    // Reconoce cada bloque de datos por el nombre de la clave y, si no lo reconoce, por la forma
+                    // de los datos, para aceptar también copias de versiones antiguas con otros nombres.
+                    // Si hay varias versiones del mismo bloque, gana la de número _vN más alto.
+                    const version = (name) => Number((name.match(/_v(\d+)$/) || [])[1]) || 0;
+                    const kindByName = (name) => /^mi_app_listas/.test(name) ? 'lists'
+                        : /^mi_app_historial/.test(name) ? 'history'
+                        : /^mi_menu_semanal/.test(name) ? 'menu' : null;
+                    const kindByShape = (value) => {
+                        const first = value[0];
+                        if (!first || typeof first !== 'object') return null;
+                        if (Array.isArray(first.items) && 'date' in first) return 'history';
+                        if (Array.isArray(first.items) && typeof first.name === 'string') return 'lists';
+                        if (typeof first.day === 'string') return 'menu';
+                        if (typeof first.name === 'string' && typeof first.category === 'string') return 'flat';
                         return null;
                     };
-                    const lists = pick(['mi_app_listas_v7', 'mi_app_listas_v6', 'mi_app_listas_v5', 'mi_app_listas_v4', 'mi_app_listas_v3']);
-                    const menu = pick(['mi_menu_semanal_v7', 'mi_menu_semanal_v6', 'mi_menu_semanal_v5', 'mi_menu_semanal_v4']);
-                    const history = pick(['mi_app_historial_v7', 'mi_app_historial_v6', 'mi_app_historial_v5', 'mi_app_historial_v4']);
+                    const best = {};
+                    for (const [name, raw] of Object.entries(keys)) {
+                        let value;
+                        try { value = JSON.parse(raw); } catch (e) { continue; /* no es JSON o está dañado: se ignora */ }
+                        if (!Array.isArray(value)) continue;
+                        const kind = kindByName(name) || kindByShape(value);
+                        if (kind && (!best[kind] || version(name) > best[kind].version)) best[kind] = { version: version(name), value };
+                    }
+
+                    let lists = best.lists ? best.lists.value : null;
+                    const menu = best.menu ? best.menu.value : null;
+                    const history = best.history ? best.history.value : null;
+                    if (!lists && best.flat) {
+                        // Formato más antiguo: una sola lista plana de productos (mismo tratamiento que loadData)
+                        const items = best.flat.value
+                            .filter(i => i && (i.type === 'semanal' || !i.type))
+                            .map(i => ({ ...i, price: null, unit: 'total', qty: 1 }));
+                        lists = [{ id: 1, name: 'Lista Principal', items }];
+                    }
 
                     if (!lists && !menu && !history) return alert('La copia no contiene datos de la app.');
                     if (lists && (lists.length === 0 || !lists.every(l => l && Array.isArray(l.items)))) return alert('Las listas de la copia están dañadas. No se ha importado nada.');
