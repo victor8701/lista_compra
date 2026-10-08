@@ -553,7 +553,11 @@
 
                 importBackup(text) {
                     let keys;
-                    try { keys = JSON.parse(text).claves; } catch (e) { keys = null; }
+                    try {
+                        // Acepta la copia de la app ({claves: {...}}) o el volcado directo de localStorage
+                        const parsed = JSON.parse(text);
+                        keys = parsed && (parsed.claves || parsed);
+                    } catch (e) { keys = null; }
                     if (!keys || typeof keys !== 'object') return alert('Esto no es una copia de seguridad válida de la app.');
 
                     // Coge, de cada bloque de datos, la versión más reciente que haya en la copia
