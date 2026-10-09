@@ -1,0 +1,19 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Cada lista compartida es un documento cuyo id es el código secreto (largo y aleatorio).
+    // Solo se puede leer o escribir conociendo ese id. No se puede listar ni borrar nada.
+    match /compras/{code} {
+      allow get: if code.size() >= 24;
+      allow create, update: if code.size() >= 24
+        && request.resource.data.keys().hasOnly(['lists', 'history', 'menu', 'v'])
+        && request.resource.data.keys().hasAll(['lists', 'history', 'menu'])
+        && request.resource.data.lists is string
+        && request.resource.data.history is string
+        && request.resource.data.menu is string
+        && request.resource.data.lists.size() < 250000
+        && request.resource.data.history.size() < 450000
+        && request.resource.data.menu.size() < 40000;
+    }
+  }
+}

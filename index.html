@@ -327,6 +327,36 @@
                     </details>
                     <p class="text-[10px] text-gray-400 mt-1.5 leading-tight">Tus datos se guardan solo en este navegador. Usa una copia para pasarlos a otro móvil, ordenador o navegador. Al importar se reemplazan los datos actuales.</p>
                 </div>
+
+                <!-- Sincronización entre móviles -->
+                <div class="mt-6 border-t border-gray-100 pt-4">
+                    <label class="text-xs font-bold text-gray-600 mb-2 block uppercase tracking-wide">Sincronización entre móviles</label>
+
+                    <p x-show="!sync.configured" class="text-[11px] text-gray-400 leading-tight">Todavía no está activada en esta web. Cuando lo esté, aquí podrás compartir tus listas entre varios móviles.</p>
+
+                    <div x-show="sync.configured && !sync.code">
+                        <button @click="startSync()" class="w-full bg-emerald-600 text-white py-2.5 rounded-lg font-bold text-sm shadow hover:bg-emerald-700 transition">
+                            <i class="fas fa-cloud-upload-alt mr-1"></i> Activar y crear código
+                        </button>
+                        <div class="flex gap-2 mt-2">
+                            <input x-model="sync.input" type="text" placeholder="¿Ya tienes un código? Pégalo aquí" class="flex-1 p-2 rounded border border-gray-300 text-xs outline-none focus:border-emerald-500">
+                            <button @click="connectSync(sync.input)" class="bg-indigo-600 text-white px-3 rounded font-bold shadow text-sm">Conectar</button>
+                        </div>
+                        <p class="text-[10px] text-gray-400 mt-1.5 leading-tight">Al activarla se crea un código secreto y se suben tus datos a la nube. Con el enlace que obtendrás, otro móvil se conecta a la misma lista.</p>
+                    </div>
+
+                    <div x-show="sync.configured && sync.code">
+                        <div class="flex items-center justify-between bg-emerald-50 border border-emerald-100 rounded-lg p-2.5 text-xs">
+                            <span class="font-medium" :class="{'text-red-600': sync.state === 'error', 'text-amber-600': sync.state === 'offline', 'text-emerald-700': sync.state !== 'error' && sync.state !== 'offline'}" x-text="syncStatusText"></span>
+                            <button @click="syncNow()" class="text-emerald-700 font-bold px-2 py-1" aria-label="Sincronizar ahora"><i class="fas fa-sync-alt"></i></button>
+                        </div>
+                        <button @click="copySyncLink()" class="w-full mt-2 bg-indigo-50 text-indigo-700 border border-indigo-200 py-2.5 rounded-lg font-bold text-sm hover:bg-indigo-100 transition shadow-sm">
+                            <i class="fas fa-link mr-1"></i> Copiar enlace para otro móvil
+                        </button>
+                        <p class="text-[10px] text-gray-400 mt-1.5 leading-tight">Quien tenga este enlace puede ver y cambiar tus listas. No lo publiques.</p>
+                        <button @click="disconnectSync()" class="mt-2 text-[11px] text-gray-500 underline">Dejar de sincronizar este móvil</button>
+                    </div>
+                </div>
             </div>
         </div>
     </main>
@@ -403,6 +433,180 @@
         let barChartInstance = null;
         let doughnutChartInstance = null;
 
+        // ---------- Sincronización entre móviles (Firestore, API REST) ----------
+        // Para activarla, pega aquí los datos de tu proyecto de Firebase (ver SINCRONIZACION.md).
+        // Mientras estén vacíos la app funciona solo en local, sin hacer ninguna petición.
+        const FIREBASE_CONFIG = { apiKey: '', projectId: '' };
+
+        function deepEqual(a, b) {
+            if (a === b) return true;
+            if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+            if (Array.isArray(a) !== Array.isArray(b)) return false;
+            const keysA = Object.keys(a), keysB = Object.keys(b);
+            return keysA.length === keysB.length && keysA.every(k => k in b && deepEqual(a[k], b[k]));
+        }
+
+        // Fusión de tres vías: parte de la última versión sincronizada (base) y aplica encima lo que
+        // cambió en este móvil (local) y en la nube (remote). Si ambos cambian lo mismo, gana local.
+        function mergeById(base, local, remote, mergeItem) {
+            const ids = (arr) => arr.map(x => x && x.id);
+            const usable = [base, local, remote].every(arr => Array.isArray(arr)
+                && ids(arr).every(id => id !== undefined && id !== null) && new Set(ids(arr)).size === arr.length);
+            // Sin ids únicos no se puede fusionar elemento a elemento: se queda con lo que haya cambiado
+            if (!usable) return deepEqual(local, base) ? remote : local;
+
+            const byId = (arr) => new Map(arr.map(x => [x.id, x]));
+            const baseById = byId(base), localById = byId(local);
+            const merged = [];
+            const seen = new Set();
+            for (const theirs of remote) {
+                seen.add(theirs.id);
+                const mine = localById.get(theirs.id), orig = baseById.get(theirs.id);
+                if (mine) merged.push(mergeItem(orig, mine, theirs));
+                // Alta en la nube, o la nube lo modificó aunque aquí se borrara (modificar gana a borrar)
+                else if (!orig || !deepEqual(orig, theirs)) merged.push(theirs);
+            }
+            for (const mine of local) {
+                if (seen.has(mine.id)) continue;
+                const orig = baseById.get(mine.id);
+                // Alta local, o modificada aquí aunque en la nube se borrara
+                if (!orig || !deepEqual(orig, mine)) merged.push(mine);
+            }
+            return merged;
+        }
+
+        function mergeFields(base, local, remote, nested = {}) {
+            const merged = {};
+            for (const key of new Set([...Object.keys(local), ...Object.keys(remote)])) {
+                const orig = base ? base[key] : undefined;
+                let value;
+                if (nested[key] && Array.isArray(local[key]) && Array.isArray(remote[key])) {
+                    value = nested[key](Array.isArray(orig) ? orig : [], local[key], remote[key]);
+                } else {
+                    value = deepEqual(local[key], orig) ? remote[key] : local[key];
+                }
+                if (value !== undefined) merged[key] = value;
+            }
+            return merged;
+        }
+
+        function mergeSync(base, local, remote) {
+            return {
+                lists: mergeById(base.lists, local.lists, remote.lists, (orig, mine, theirs) =>
+                    mergeFields(orig, mine, theirs, { items: (b, l, r) => mergeById(b, l, r, mergeFields) })),
+                history: mergeById(base.history, local.history, remote.history, mergeFields),
+                menu: deepEqual(local.menu, base.menu) ? remote.menu : local.menu
+            };
+        }
+
+        function validSyncData(d) {
+            return !!d && Array.isArray(d.lists) && d.lists.length > 0 && d.lists.every(l => l && Array.isArray(l.items))
+                && Array.isArray(d.history) && d.history.every(t => t && Array.isArray(t.items))
+                && Array.isArray(d.menu) && d.menu.every(m => m && typeof m.day === 'string');
+        }
+
+        class CloudError extends Error {
+            constructor(message, { conflict = false, network = false } = {}) {
+                super(message);
+                this.conflict = conflict;
+                this.network = network;
+            }
+        }
+
+        function cloudUrl(code) {
+            return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(FIREBASE_CONFIG.projectId)}/databases/(default)/documents/compras/${encodeURIComponent(code)}`;
+        }
+
+        // Con tiempo máximo: una petición colgada (red móvil inestable) no debe bloquear la sincronización para siempre
+        async function cloudRequest(url, options = {}) {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 20000);
+            try {
+                return await fetch(url, { ...options, signal: controller.signal });
+            } catch (e) {
+                throw new CloudError('Sin conexión con Firebase', { network: true });
+            } finally {
+                clearTimeout(timer);
+            }
+        }
+
+        async function cloudFail(res) {
+            let body = {};
+            try { body = await res.json(); } catch (e) { /* respuesta sin cuerpo */ }
+            const error = body.error || {};
+            const status = error.status || '';
+            if (['FAILED_PRECONDITION', 'ABORTED', 'ALREADY_EXISTS'].includes(status) || res.status === 409 || res.status === 412) {
+                return new CloudError('Los datos cambiaron a la vez en otro móvil', { conflict: true });
+            }
+            if (res.status === 403 || status === 'PERMISSION_DENIED') return new CloudError('Firebase ha rechazado el acceso: revisa las reglas de Firestore');
+            if (res.status === 404) return new CloudError('No se encuentra la base de datos: crea Firestore en tu proyecto de Firebase');
+            if (res.status === 400 && /API key/i.test(error.message || '')) return new CloudError('La clave (apiKey) de Firebase no es válida');
+            return new CloudError(`Error de Firebase (${res.status}${status ? ' ' + status : ''})`);
+        }
+
+        // Devuelve { data, updateTime } o null si todavía no existe nada con ese código
+        async function cloudGet(code) {
+            const res = await cloudRequest(`${cloudUrl(code)}?key=${encodeURIComponent(FIREBASE_CONFIG.apiKey)}`);
+            if (res.status === 404) {
+                const text = await res.text();
+                if (/database/i.test(text) && !/document/i.test(text)) throw new CloudError('No se encuentra la base de datos: crea Firestore en tu proyecto de Firebase');
+                return null;
+            }
+            if (!res.ok) throw await cloudFail(res);
+            const doc = await res.json();
+            try {
+                const fields = doc.fields || {};
+                const data = {
+                    lists: JSON.parse(fields.lists.stringValue),
+                    history: JSON.parse(fields.history.stringValue),
+                    menu: JSON.parse(fields.menu.stringValue)
+                };
+                if (!validSyncData(data)) throw new Error('formato');
+                return { data, updateTime: doc.updateTime };
+            } catch (e) {
+                throw new CloudError('Los datos de la nube no tienen el formato esperado');
+            }
+        }
+
+        // Guarda los datos. Con updateTime solo escribe si nadie ha cambiado el documento desde entonces;
+        // sin updateTime solo escribe si el documento todavía no existe. Devuelve el nuevo updateTime.
+        async function cloudPut(code, data, updateTime) {
+            const sizes = { lists: JSON.stringify(data.lists).length, history: JSON.stringify(data.history).length, menu: JSON.stringify(data.menu).length };
+            // Mismos topes que firestore.rules (un documento de Firestore admite como mucho 1 MiB)
+            if (sizes.lists >= 250000 || sizes.history >= 450000 || sizes.menu >= 40000) {
+                throw new CloudError('Hay demasiados datos para sincronizar (normalmente, un historial de tickets muy largo). Exporta una copia y borra tickets antiguos.');
+            }
+            const root = `projects/${FIREBASE_CONFIG.projectId}/databases/(default)/documents`;
+            const res = await cloudRequest(`https://firestore.googleapis.com/v1/${root}:commit?key=${encodeURIComponent(FIREBASE_CONFIG.apiKey)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ writes: [{
+                    update: {
+                        name: `${root}/compras/${code}`,
+                        fields: {
+                            lists: { stringValue: JSON.stringify(data.lists) },
+                            history: { stringValue: JSON.stringify(data.history) },
+                            menu: { stringValue: JSON.stringify(data.menu) },
+                            v: { integerValue: '1' }
+                        }
+                    },
+                    updateMask: { fieldPaths: ['lists', 'history', 'menu', 'v'] },
+                    currentDocument: updateTime ? { updateTime } : { exists: false }
+                }] })
+            });
+            if (!res.ok) throw await cloudFail(res);
+            return (await res.json()).writeResults[0].updateTime;
+        }
+
+        function generateSyncCode() {
+            let code;
+            do {
+                const bytes = crypto.getRandomValues(new Uint8Array(24));
+                code = btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+            } while (/^__.*__$/.test(code)); // Firestore no admite ids con ese formato
+            return code;
+        }
+
         document.addEventListener('alpine:init', () => {
             Alpine.data('appData', () => ({
                 currentTab: 'compra',
@@ -411,6 +615,11 @@
                 quickItemCategory: 'Despensa',
                 newListName: '',
                 backupText: '',
+                sync: { configured: !!(FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId), code: '', input: '', state: 'idle', error: '', lastSync: null },
+                syncBase: null,
+                syncBusy: false,
+                syncPending: false,
+                syncTimer: null,
                 showCheckoutModal: false,
                 showEditModal: false,
                 editingTicketIndex: null,
@@ -469,9 +678,176 @@
                 init() {
                     this.loadData();
                     
-                    this.$watch('lists', (val) => localStorage.setItem('mi_app_listas_v7', JSON.stringify(val)), { deep: true });
-                    this.$watch('menu', (val) => localStorage.setItem('mi_menu_semanal_v7', JSON.stringify(val)), { deep: true });
-                    this.$watch('purchaseHistory', (val) => localStorage.setItem('mi_app_historial_v7', JSON.stringify(val)), { deep: true });
+                    this.$watch('lists', (val) => { localStorage.setItem('mi_app_listas_v7', JSON.stringify(val)); this.scheduleSync(); }, { deep: true });
+                    this.$watch('menu', (val) => { localStorage.setItem('mi_menu_semanal_v7', JSON.stringify(val)); this.scheduleSync(); }, { deep: true });
+                    this.$watch('purchaseHistory', (val) => { localStorage.setItem('mi_app_historial_v7', JSON.stringify(val)); this.scheduleSync(); }, { deep: true });
+
+                    this.initSync();
+                },
+
+                // ----- Sincronización entre móviles -----
+                initSync() {
+                    if (!this.sync.configured) return;
+                    this.sync.code = localStorage.getItem('mi_sync_code_v1') || '';
+                    try { this.syncBase = JSON.parse(localStorage.getItem('mi_sync_base_v1')); } catch (e) { this.syncBase = null; }
+
+                    window.addEventListener('online', () => this.syncNow());
+                    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') this.syncNow(); });
+                    setInterval(() => { if (document.visibilityState === 'visible') this.syncNow(); }, 15000);
+
+                    // Enlace para conectar otro móvil: https://...#sync=CODIGO (al abrir la web o al pegarlo en la pestaña ya abierta)
+                    window.addEventListener('hashchange', () => this.handleSyncLink());
+                    this.handleSyncLink();
+                    this.syncNow();
+                },
+
+                handleSyncLink() {
+                    const link = location.hash.match(/sync=([A-Za-z0-9_-]+)/);
+                    if (!link) return;
+                    window.history.replaceState(null, '', location.pathname + location.search);
+                    if (link[1] === this.sync.code) return;
+                    if (this.sync.code && !confirm('Este enlace es de otra lista compartida. ¿Cambiar a ella en este móvil?')) return;
+                    this.connectSync(link[1]);
+                },
+
+                get syncStatusText() {
+                    if (this.sync.state === 'syncing') return 'Sincronizando…';
+                    if (this.sync.state === 'offline') return 'Sin conexión: se sincronizará al volver';
+                    if (this.sync.state === 'error') return `Error: ${this.sync.error}`;
+                    return this.sync.lastSync ? `Sincronizado a las ${new Date(this.sync.lastSync).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'Conectado';
+                },
+
+                // Datos que se comparten (sin el estado de edición del menú, que es solo de pantalla)
+                syncSnapshot() {
+                    return JSON.parse(JSON.stringify({
+                        lists: this.lists,
+                        history: this.purchaseHistory,
+                        menu: this.menu.map(({ isEditing, ...day }) => day)
+                    }));
+                },
+
+                applySyncData(data) {
+                    const current = this.syncSnapshot();
+                    if (!deepEqual(current.lists, data.lists)) {
+                        this.lists = data.lists;
+                        if (!this.lists.some(l => l.id == this.activeListId)) this.activeListId = Number(this.lists[0].id);
+                    }
+                    if (!deepEqual(current.history, data.history)) this.purchaseHistory = data.history;
+                    if (!deepEqual(current.menu, data.menu)) this.menu = data.menu.map(d => ({ ...d, isEditing: false }));
+                },
+
+                saveSyncBase(data) {
+                    // Copia independiente: si compartiera objetos con los datos en pantalla, cada edición
+                    // cambiaría también la base y la fusión no vería que hay algo nuevo que enviar
+                    this.syncBase = JSON.parse(JSON.stringify(data));
+                    try { localStorage.setItem('mi_sync_base_v1', JSON.stringify(this.syncBase)); } catch (e) { /* sin espacio: se sigue sin base guardada */ }
+                },
+
+                // Una app recién instalada, con la lista inicial y sin compras, no tiene nada que perder
+                isPristine(data) {
+                    return data.history.length === 0 && data.lists.length === 1 && data.lists[0].name === 'Mi Compra Principal'
+                        && deepEqual(data.lists[0].items, this.defaultListItems);
+                },
+
+                scheduleSync() {
+                    if (!this.sync.code) return;
+                    clearTimeout(this.syncTimer);
+                    this.syncTimer = setTimeout(() => this.syncNow(), 1500);
+                },
+
+                async syncNow() {
+                    if (!this.sync.code) return;
+                    if (this.syncBusy) { this.syncPending = true; return; }
+                    this.syncBusy = true;
+                    this.sync.state = 'syncing';
+                    try {
+                        for (let attempt = 0; ; attempt++) {
+                            const remote = await cloudGet(this.sync.code);
+                            // Desde aquí hasta aplicar los cambios no hay esperas, para no pisar lo que se edite mientras tanto
+                            const local = this.syncSnapshot();
+                            // Sin base guardada se parte de vacío: se unen los dos lados y no se borra nada
+                            const merged = remote ? mergeSync(this.syncBase || { lists: [], history: [], menu: [] }, local, remote.data) : local;
+                            if (remote) this.applySyncData(merged);
+                            if (remote && deepEqual(merged, remote.data)) { this.saveSyncBase(merged); break; }
+                            try {
+                                await cloudPut(this.sync.code, merged, remote ? remote.updateTime : null);
+                                this.saveSyncBase(merged);
+                                break;
+                            } catch (e) {
+                                if (!e.conflict || attempt >= 3) throw e;
+                                // Otro móvil guardó justo antes: se vuelve a leer y a fusionar
+                            }
+                        }
+                        this.sync.state = 'idle';
+                        this.sync.error = '';
+                        this.sync.lastSync = Date.now();
+                    } catch (e) {
+                        this.sync.state = e.network ? 'offline' : 'error';
+                        this.sync.error = e.message;
+                    } finally {
+                        this.syncBusy = false;
+                        if (this.syncPending) { this.syncPending = false; this.scheduleSync(); }
+                    }
+                },
+
+                startSync() {
+                    this.connectSync(generateSyncCode(), { create: true });
+                },
+
+                async connectSync(code, { create = false } = {}) {
+                    code = String(code || '').trim();
+                    if (!/^[A-Za-z0-9_-]{24,}$/.test(code)) return alert('Ese código no es válido: debe tener al menos 24 letras o números.');
+                    if (this.syncBusy) return alert('Hay una sincronización en curso. Inténtalo de nuevo en unos segundos.');
+                    this.syncBusy = true;
+                    this.sync.state = 'syncing';
+                    try {
+                        const remote = await cloudGet(code);
+                        const local = this.syncSnapshot();
+                        let base;
+                        if (!remote) {
+                            if (!create && !confirm('No existe ninguna lista compartida con ese código. ¿Crearla con los datos de este móvil?')) return;
+                            await cloudPut(code, local, null);
+                            base = local;
+                        } else {
+                            if (!deepEqual(local, remote.data) && !this.isPristine(local)) {
+                                if (!confirm('Ya hay datos guardados en la nube con ese código.\n\nSi continúas, los datos de este móvil se reemplazarán por los de la nube (se guarda una copia local por si acaso). ¿Continuar?')) return;
+                                try { localStorage.setItem('mi_sync_backup_v1', JSON.stringify({ guardado: new Date().toISOString(), datos: local })); } catch (e) { /* sin espacio: se sigue */ }
+                            }
+                            this.applySyncData(remote.data);
+                            base = remote.data;
+                        }
+                        this.saveSyncBase(base);
+                        this.sync.code = code;
+                        localStorage.setItem('mi_sync_code_v1', code);
+                        this.sync.input = '';
+                        this.sync.error = '';
+                        this.sync.lastSync = Date.now();
+                    } catch (e) {
+                        alert(`No se pudo conectar: ${e.message}`);
+                    } finally {
+                        this.syncBusy = false;
+                        this.sync.state = 'idle';
+                        if (this.syncPending) { this.syncPending = false; this.scheduleSync(); }
+                    }
+                },
+
+                disconnectSync() {
+                    if (!confirm('Este móvil dejará de sincronizarse. Tus datos se conservan aquí y en la nube. ¿Continuar?')) return;
+                    clearTimeout(this.syncTimer);
+                    this.sync.code = '';
+                    this.syncBase = null;
+                    localStorage.removeItem('mi_sync_code_v1');
+                    localStorage.removeItem('mi_sync_base_v1');
+                },
+
+                async copySyncLink() {
+                    const link = `${location.origin}${location.pathname}#sync=${this.sync.code}`;
+                    try {
+                        await navigator.clipboard.writeText(link);
+                        alert('Enlace copiado. Ábrelo en el otro móvil para conectarlo.');
+                    } catch (e) {
+                        prompt('Copia este enlace y ábrelo en el otro móvil:', link);
+                    }
                 },
 
                 switchTab(tab) {
@@ -606,7 +982,8 @@
                         history ? `${history.length} ticket(s)` : null,
                         menu ? `${menu.length} día(s) de menú` : null
                     ].filter(Boolean).join(', ');
-                    if (!confirm(`La copia contiene: ${resumen}.\n\nSe reemplazarán los datos que tengas ahora en este navegador. ¿Continuar?`)) return;
+                    const nube = this.sync.code ? '\n\nLa sincronización está activada: este cambio también se aplicará en tus otros móviles.' : '';
+                    if (!confirm(`La copia contiene: ${resumen}.\n\nSe reemplazarán los datos que tengas ahora en este navegador.${nube} ¿Continuar?`)) return;
 
                     if (lists) {
                         this.lists = lists;
