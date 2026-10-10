@@ -436,7 +436,7 @@
         // ---------- Sincronización entre móviles (Firestore, API REST) ----------
         // Para activarla, pega aquí los datos de tu proyecto de Firebase (ver SINCRONIZACION.md).
         // Mientras estén vacíos la app funciona solo en local, sin hacer ninguna petición.
-        const FIREBASE_CONFIG = { apiKey: '', projectId: '' };
+        const FIREBASE_CONFIG = { apiKey: 'AIzaSyC9X0geBrqy6UmMk2kUXpncM9CW_CDp_Mg', projectId: 'lista-compra-24638' };
 
         function deepEqual(a, b) {
             if (a === b) return true;
@@ -537,6 +537,9 @@
             const status = error.status || '';
             if (['FAILED_PRECONDITION', 'ABORTED', 'ALREADY_EXISTS'].includes(status) || res.status === 409 || res.status === 412) {
                 return new CloudError('Los datos cambiaron a la vez en otro móvil', { conflict: true });
+            }
+            if ((error.details || []).some(d => d.reason === 'SERVICE_DISABLED') || /has not been used in project|is disabled/i.test(error.message || '')) {
+                return new CloudError('Firestore no está activado en tu proyecto de Firebase: crea la base de datos Firestore');
             }
             if (res.status === 403 || status === 'PERMISSION_DENIED') return new CloudError('Firebase ha rechazado el acceso: revisa las reglas de Firestore');
             if (res.status === 404) return new CloudError('No se encuentra la base de datos: crea Firestore en tu proyecto de Firebase');
