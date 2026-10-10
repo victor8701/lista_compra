@@ -13,8 +13,9 @@ Los nombres de los menús de Firebase pueden cambiar un poco con el tiempo; busc
 
 1. Entra en <https://console.firebase.google.com> con tu cuenta de Google y pulsa **Crear un proyecto**.
    Ponle un nombre (por ejemplo `mi-compra`). Google Analytics no hace falta: puedes desactivarlo.
-2. En el menú **Compilación** (Build) elige **Firestore Database** → **Crear base de datos**.
-   Ubicación en Europa (por ejemplo `eur3` o `europe-west`) y modo **producción**.
+2. En el menú **Compilación** (Build) o **Bases de datos y almacenamiento** elige **Cloud Firestore**
+   (no *Realtime Database*, que es otra cosa) → **Crear base de datos**. Deja el ID `(default)`,
+   ubicación en Europa (por ejemplo `eur3` o `europe-west`) y modo **producción**.
 3. Abre la pestaña **Reglas**, borra lo que haya, pega el contenido del archivo
    [`firestore.rules`](firestore.rules) y pulsa **Publicar**. Estas reglas impiden listar, borrar o
    escribir cosas raras: solo se puede leer o escribir un documento conociendo su código secreto.
@@ -58,3 +59,14 @@ Los nombres de los menús de Firebase pueden cambiar un poco con el tiempo; busc
   y guarda con la condición «solo si nadie lo ha cambiado desde que lo leí» (`currentDocument.updateTime`).
   Si otro móvil se adelantó, se vuelve a leer, a fusionar y a guardar.
 - Estado local: `mi_sync_code_v1` (código) y `mi_sync_base_v1` (última versión sincronizada).
+
+## Si algo falla
+
+La sección de sincronización en Gestión muestra el motivo en rojo:
+
+- **«Firestore no está activado en tu proyecto…»**: falta crear la base de datos Cloud Firestore (paso 2), o
+  se creó otro tipo de base de datos. Si la acabas de crear, espera unos minutos.
+- **«Firebase ha rechazado el acceso: revisa las reglas de Firestore»**: las reglas del paso 3 no están
+  publicadas o no son las de `firestore.rules`.
+- **«La clave (apiKey) de Firebase no es válida»**: revisa `apiKey` en `FIREBASE_CONFIG`.
+- **«Sin conexión con Firebase»**: no hay internet; se sincronizará al volver.
